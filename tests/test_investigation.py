@@ -108,4 +108,4 @@ def test_investigation_endpoint_returns_404(client: TestClient) -> None:
     response = client.get("/investigations/TXN-NOT-REAL")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Transaction not found"
+    assert response.json()["detail"] == "Transaction TXN-NOT-REAL not found"
