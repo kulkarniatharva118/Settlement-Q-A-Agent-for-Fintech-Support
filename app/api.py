@@ -1,5 +1,6 @@
-import os
 from __future__ import annotations
+import os
+
 
 from fastapi import Depends, FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
