@@ -57,7 +57,11 @@ def read_investigation(
     except TransactionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Transaction {transaction_id} not found") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="Unexpected investigation error") from exc
+        print(f"INVESTIGATION ERROR: {type(exc).__name__}: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Investigation error: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 @app.post(
