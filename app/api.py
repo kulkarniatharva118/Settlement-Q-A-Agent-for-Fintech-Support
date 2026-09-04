@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.repository import get_transaction_records
-from app.schemas import InvestigationResult
+from app.schemas import InvestigationExplanationResponse, InvestigationResult
+from app.services.ai_explanation import (
+    LLMConfigurationError,
+    LLMProviderError,
+    LLMTimeoutError,
+    generate_explanation,
+)
 from app.services.investigation import TransactionNotFoundError, investigate_transaction
 
 
@@ -44,3 +50,35 @@ def read_investigation(
         raise HTTPException(status_code=404, detail=f"Transaction {transaction_id} not found") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Unexpected investigation error") from exc
+
+
+@app.post(
+    "/investigations/{transaction_id}/explanation",
+    response_model=InvestigationExplanationResponse,
+    summary="Generate a support explanation for a deterministic investigation",
+)
+def create_investigation_explanation(
+    transaction_id: str = Path(description="Transaction ID to investigate and explain."),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        investigation = investigate_transaction(transaction_id, db)
+    except TransactionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Transaction {transaction_id} not found") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Unexpected investigation error") from exc
+
+    try:
+        explanation = generate_explanation(investigation)
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="AI explanation service is not configured") from exc
+    except LLMTimeoutError as exc:
+        raise HTTPException(status_code=504, detail="AI explanation service timed out") from exc
+    except LLMProviderError as exc:
+        raise HTTPException(status_code=502, detail="AI explanation service is unavailable") from exc
+
+    return {
+        "transaction_id": transaction_id,
+        "investigation": investigation,
+        "explanation": explanation,
+    }

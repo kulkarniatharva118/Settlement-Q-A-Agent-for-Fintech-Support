@@ -14,3 +14,18 @@ class InvestigationResult(BaseModel):
     discrepancies: list[str]
     evidence: list[str]
     recommended_action: str
+
+
+class AIExplanation(BaseModel):
+    summary: str
+    what_happened: str
+    why: str
+    evidence: list[str]
+    recommended_action: str
+    uncertainty: str
+
+
+class InvestigationExplanationResponse(BaseModel):
+    transaction_id: str
+    investigation: InvestigationResult
+    explanation: AIExplanation
