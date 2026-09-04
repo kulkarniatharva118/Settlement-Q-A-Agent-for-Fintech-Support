@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.repository import get_transaction_records
+from app.services.investigation import TransactionNotFoundError, investigate_transaction
 
 
 app = FastAPI(title="PS-8 Settlement Q&A Agent API")
@@ -21,3 +22,11 @@ def read_transaction(transaction_id: str, db: Session = Depends(get_db)) -> dict
     if records is None:
         raise HTTPException(status_code=404, detail="Transaction not found")
     return records
+
+
+@app.get("/investigations/{transaction_id}")
+def read_investigation(transaction_id: str, db: Session = Depends(get_db)) -> dict:
+    try:
+        return investigate_transaction(transaction_id, db)
+    except TransactionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Transaction not found") from exc
