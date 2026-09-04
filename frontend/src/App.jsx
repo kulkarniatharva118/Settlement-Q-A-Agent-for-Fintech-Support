@@ -7,95 +7,77 @@ const demos = [
   ['TXN-DEMO-005', 'Missing Ledger'], ['TXN-DEMO-006', 'Settlement Not Initiated'],
   ['TXN-DEMO-007', 'Duplicate Settlement'],
 ];
-
+const systems = [['gateway', 'Gateway', 'gateway_status', 'gateway_reference'], ['ledger', 'Ledger', 'ledger_status', 'ledger_entry_id'], ['bank', 'Bank', 'bank_status', 'utr']];
+const humanize = (value = '') => value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 const statusTone = (value = '') => {
   const text = value.toLowerCase();
   if (text.includes('complete') || text === 'captured' || text === 'settled' || text === 'posted') return 'success';
-  if (text.includes('missing') || text.includes('mismatch') || text.includes('duplicate') || text.includes('conflict')) return 'danger';
+  if (text.includes('missing') || text.includes('mismatch') || text.includes('duplicate') || text.includes('conflict') || text.includes('insufficient')) return 'danger';
   if (text.includes('delay') || text.includes('pending') || text.includes('accrued') || text.includes('initiated')) return 'warning';
   return 'neutral';
 };
-const humanize = (value = '') => value.replaceAll('_', ' ').replace(/\b\w/g, char => char.toUpperCase());
+const isUncertain = (result) => ['insufficient_evidence', 'conflicting_evidence'].includes(result.root_cause) || result.confidence < 0.6;
+
+async function requestJson(path, options) {
+  let response;
+  try { response = await fetch(`${API_BASE}${path}`, options); } catch { throw new Error('Unable to reach the investigation service. Check that the backend is running.'); }
+  let body;
+  try { body = await response.json(); } catch { throw new Error('The investigation service returned an unreadable response.'); }
+  if (!response.ok) throw new Error(body.detail || 'The investigation service could not complete this request.');
+  return body;
+}
 
 function App() {
-  const [view, setView] = useState('investigate');
-  const [transactionId, setTransactionId] = useState('');
-  const [result, setResult] = useState(null);
-  const [explanation, setExplanation] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [explanationLoading, setExplanationLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [view, setView] = useState('investigate'); const [transactionId, setTransactionId] = useState('');
+  const [result, setResult] = useState(null); const [records, setRecords] = useState(null); const [explanation, setExplanation] = useState(null);
+  const [loading, setLoading] = useState(false); const [explanationLoading, setExplanationLoading] = useState(false);
+  const [error, setError] = useState(''); const [aiError, setAiError] = useState(''); const [copyState, setCopyState] = useState('');
 
   async function investigate(id = transactionId) {
     const normalizedId = id.trim();
-    if (!normalizedId) return setError('Enter a transaction ID to begin an investigation.');
-    setTransactionId(normalizedId); setLoading(true); setError(''); setResult(null); setExplanation(null); setView('investigate');
+    if (!normalizedId) { setError('Enter a transaction ID to begin an investigation.'); return; }
+    setTransactionId(normalizedId); setLoading(true); setError(''); setAiError(''); setResult(null); setRecords(null); setExplanation(null); setView('investigate');
     try {
-      const response = await fetch(`${API_BASE}/investigations/${encodeURIComponent(normalizedId)}`);
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.detail || 'Investigation could not be completed.');
-      setResult(body);
+      const [investigation, transactionRecords] = await Promise.all([requestJson(`/investigations/${encodeURIComponent(normalizedId)}`), requestJson(`/transactions/${encodeURIComponent(normalizedId)}`)]);
+      if (!Array.isArray(investigation.evidence) || !Array.isArray(investigation.discrepancies) || !transactionRecords) throw new Error('The investigation response is incomplete. Please try again.');
+      setResult(investigation); setRecords(transactionRecords);
     } catch (requestError) { setError(requestError.message || 'Unable to reach the investigation service.'); }
     finally { setLoading(false); }
   }
-
+  function chooseDemo(id) { setTransactionId(id); setResult(null); setRecords(null); setExplanation(null); setError(''); setAiError(''); setView('investigate'); }
   async function generateExplanation() {
-    if (!result) return;
-    setExplanationLoading(true); setError('');
-    try {
-      const response = await fetch(`${API_BASE}/investigations/${encodeURIComponent(result.transaction_id)}/explanation`, { method: 'POST' });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.detail || 'Explanation could not be generated.');
-      setExplanation(body.explanation);
-    } catch (requestError) { setError(requestError.message || 'Unable to reach the AI explanation service.'); }
+    if (!result || explanationLoading) return;
+    setExplanationLoading(true); setAiError('');
+    try { const body = await requestJson(`/investigations/${encodeURIComponent(result.transaction_id)}/explanation`, { method: 'POST' }); if (!body.explanation || !Array.isArray(body.explanation.evidence)) throw new Error(); setExplanation(body.explanation); }
+    catch { setAiError('AI explanation unavailable. The verified investigation result is still available.'); }
     finally { setExplanationLoading(false); }
   }
-
-  return <div className="app-shell">
-    <aside className="sidebar">
-      <div className="brand"><span className="brand-mark">S</span><span>SettleTrace</span></div>
-      <p className="sidebar-kicker">Settlement operations</p>
-      <nav className="navigation" aria-label="Primary navigation">
-        <button className={view === 'investigate' ? 'nav-item active' : 'nav-item'} onClick={() => setView('investigate')}><i>⌕</i> Investigate</button>
-        <button className={view === 'how' ? 'nav-item active' : 'nav-item'} onClick={() => setView('how')}><i>◈</i> How It Works</button>
-        <button className={view === 'demos' ? 'nav-item active' : 'nav-item'} onClick={() => setView('demos')}><i>▤</i> Demo Cases</button>
-      </nav>
-      <div className="sources"><p className="eyebrow">Data sources</p><p className="source"><b className="dot" />Gateway <span>Ready</span></p><p className="source"><b className="dot" />Bank <span>Ready</span></p><p className="source"><b className="dot" />Ledger <span>Ready</span></p></div>
-      <p className="sidebar-footer">Verified reconciliation workspace</p>
-    </aside>
-    <main className="main"><header className="topbar"><div><p className="eyebrow">Operations / Settlement investigation</p><h1>{view === 'how' ? 'How the system works' : view === 'demos' ? 'Demo cases' : 'Investigation workspace'}</h1></div><div className="verified"><span>✓</span> Deterministic first</div></header>
-      {view === 'investigate' && <InvestigationView {...{transactionId, setTransactionId, investigate, result, explanation, loading, explanationLoading, generateExplanation, error}} />}
-      {view === 'how' && <HowItWorks />}
-      {view === 'demos' && <DemoCases onSelect={investigate} />}
-    </main>
-  </div>;
+  async function copySummary() {
+    if (!result || !navigator.clipboard) return;
+    const text = [`Transaction: ${result.transaction_id}`, `Settlement status: ${humanize(result.settlement_status)}`, `Root cause: ${humanize(result.root_cause)}`, `Confidence: ${Math.round(result.confidence * 100)}%`, `Recommended action: ${result.recommended_action}`].join('\n');
+    try { await navigator.clipboard.writeText(text); setCopyState('Copied'); setTimeout(() => setCopyState(''), 1800); } catch { setCopyState('Copy unavailable'); }
+  }
+  return <div className="app-shell"><aside className="sidebar"><div className="brand"><span className="brand-mark">S</span><span>SettleTrace</span></div><p className="sidebar-kicker">Settlement operations</p><nav className="navigation" aria-label="Primary navigation"><button className={view === 'investigate' ? 'nav-item active' : 'nav-item'} onClick={() => setView('investigate')}><i>⌕</i> Investigate</button><button className={view === 'how' ? 'nav-item active' : 'nav-item'} onClick={() => setView('how')}><i>◇</i> How It Works</button><button className={view === 'demos' ? 'nav-item active' : 'nav-item'} onClick={() => setView('demos')}><i>▤</i> Demo Cases</button></nav><div className="sources"><p className="eyebrow">Data sources</p><p className="source"><b className="dot" />Gateway <span>Queried on demand</span></p><p className="source"><b className="dot" />Bank <span>Queried on demand</span></p><p className="source"><b className="dot" />Ledger <span>Queried on demand</span></p></div><p className="sidebar-footer">Verified reconciliation workspace</p></aside><main className="main"><header className="topbar"><div><p className="eyebrow">Operations / Settlement investigation</p><h1>{view === 'how' ? 'How the system works' : view === 'demos' ? 'Demo cases' : 'Investigation workspace'}</h1></div><div className="verified"><span>✓</span> Deterministic first</div></header>{view === 'investigate' && <InvestigationView {...{ transactionId, setTransactionId, investigate, result, records, explanation, loading, explanationLoading, generateExplanation, error, aiError, copySummary, copyState, chooseDemo }} />}{view === 'how' && <HowItWorks />}{view === 'demos' && <DemoCases onSelect={chooseDemo} />}</main></div>;
 }
 
-function InvestigationView({ transactionId, setTransactionId, investigate, result, explanation, loading, explanationLoading, generateExplanation, error }) {
-  return <>
-    <section className={result ? 'search-panel compact' : 'search-panel'}><div><p className="eyebrow">Transaction lookup</p><h2>{result ? result.transaction_id : 'Investigate a Transaction'}</h2>{!result && <p>Trace settlement evidence across Gateway, Bank and Ledger.</p>}</div><form onSubmit={event => { event.preventDefault(); investigate(); }}><label htmlFor="transaction-id">Transaction ID</label><div className="input-row"><input id="transaction-id" value={transactionId} onChange={event => setTransactionId(event.target.value)} placeholder="e.g. TXN-DEMO-004" /><button className="primary" disabled={loading}>{loading ? 'Investigating…' : 'Investigate'}</button></div></form></section>
-    {error && <div className="alert" role="alert">{error}</div>}
-    {!result && !loading && <section className="empty-state"><div className="empty-icon">⌕</div><h2>Start with a transaction ID</h2><p>Enter a transaction ID to reconcile its Gateway, Bank and Ledger records.</p><div className="source-flow"><span>Gateway</span><b>+</b><span>Bank</span><b>+</b><span>Ledger</span><b>→</b><strong>Verified result</strong></div></section>}
-    {result && <Workspace {...{result, explanation, explanationLoading, generateExplanation}} />}
-  </>;
+function InvestigationView(props) {
+  const { transactionId, setTransactionId, investigate, result, records, explanation, loading, explanationLoading, generateExplanation, error, aiError, copySummary, copyState, chooseDemo } = props;
+  return <><section className={result ? 'search-panel compact' : 'search-panel'}><div><p className="eyebrow">Transaction lookup</p><h2>{result ? result.transaction_id : 'Investigate a Transaction'}</h2>{!result && <p>Trace settlement evidence across Gateway, Bank and Ledger.</p>}</div><form onSubmit={(event) => { event.preventDefault(); investigate(); }}><label htmlFor="transaction-id">Transaction ID</label><div className="input-row"><input id="transaction-id" value={transactionId} onChange={(event) => setTransactionId(event.target.value)} placeholder="e.g. TXN-DEMO-004" /><button className="primary" disabled={loading}>{loading ? 'Investigating transaction…' : 'Investigate'}</button></div></form></section>{error && <div className="alert" role="alert">{error}</div>}{loading && <section className="loading-state" aria-live="polite"><span className="spinner" />Investigating transaction across Gateway, Bank and Ledger…</section>}{!result && !loading && <section className="empty-state"><div className="empty-icon">⌕</div><h2>Enter a transaction ID to begin</h2><p>Reconcile its Gateway, Bank and Ledger records into a verified investigation result.</p><div className="source-flow"><span>Gateway</span><b>+</b><span>Bank</span><b>+</b><span>Ledger</span><b>→</b><strong>Verified result</strong></div><div className="empty-demos"><span>Try a demo case:</span>{demos.slice(0, 4).map(([id]) => <button key={id} onClick={() => chooseDemo(id)}>{id}</button>)}</div></section>}{result && records && <Workspace {...{ result, records, explanation, explanationLoading, generateExplanation, aiError, copySummary, copyState }} />}</>;
 }
 
-function Workspace({ result, explanation, explanationLoading, generateExplanation }) {
-  const tone = statusTone(result.settlement_status);
-  return <div className="workspace">
-    <section className="result-banner"><div><p className="eyebrow">Investigation result <span className="verified-note">Determined from Gateway, Bank and Ledger records</span></p><h2>{humanize(result.settlement_status)}</h2><p className="cause">Root cause: <strong>{humanize(result.root_cause)}</strong></p></div><Confidence value={result.confidence} tone={tone} /></section>
-    <section><div className="section-heading"><div><p className="eyebrow">Record trace</p><h2>Source status</h2></div><span className="legend">Text labels accompany every status</span></div><div className="status-grid"><StatusCard name="Gateway" values={result.gateway_status} /><StatusCard name="Bank" values={result.bank_status} /><StatusCard name="Ledger" values={result.ledger_status} /></div></section>
-    <div className="detail-grid"><section className="panel"><p className="eyebrow">Detected issues</p><h2>Discrepancies</h2>{result.discrepancies.length ? <div className="chips">{result.discrepancies.map(item => <span className={`chip ${statusTone(item)}`} key={item}>{humanize(item)}</span>)}</div> : <p className="quiet">No discrepancies detected.</p>}</section><section className="panel action-panel"><p className="eyebrow">Next step</p><h2>Recommended action</h2><p>{result.recommended_action}</p></section></div>
-    <section className="panel evidence"><p className="eyebrow">Verified record detail</p><h2>Evidence</h2><ul>{result.evidence.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></section>
-    <section className="ai-panel"><div className="ai-heading"><div><p className="eyebrow">AI-assisted explanation</p><h2>Natural-language explanation</h2><p>Generated only from the verified investigation result above.</p></div>{!explanation && <button className="secondary" disabled={explanationLoading} onClick={generateExplanation}>{explanationLoading ? 'Generating…' : 'Generate Explanation'}</button>}</div>{explanation && <div className="explanation-grid"><Explanation label="Summary" text={explanation.summary} /><Explanation label="What happened" text={explanation.what_happened} /><Explanation label="Why" text={explanation.why} /><Explanation label="Recommended action" text={explanation.recommended_action} /><Explanation label="Uncertainty" text={explanation.uncertainty} /><div><p className="explain-label">Evidence</p><ul>{explanation.evidence.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div></div>}</section>
-  </div>;
+function Workspace({ result, records, explanation, explanationLoading, generateExplanation, aiError, copySummary, copyState }) {
+  const uncertain = isUncertain(result); const tone = uncertain ? 'danger' : statusTone(result.settlement_status);
+  return <div className="workspace"><section className={`result-banner ${uncertain ? 'uncertain' : ''}`}><div><p className="eyebrow">Investigation result <span className="verified-note">Determined from Gateway, Bank and Ledger records</span></p><h2>{uncertain ? 'Unable to determine a definitive settlement cause' : humanize(result.settlement_status)}</h2><p className="cause">Transaction <strong>{result.transaction_id}</strong> · Root cause: <strong>{humanize(result.root_cause)}</strong></p>{uncertain && <p className="uncertainty-note">{result.recommended_action}</p>}</div><div className="summary-actions"><Confidence value={result.confidence} tone={tone} /><button className="copy-button" onClick={copySummary}>{copyState || 'Copy summary'}</button></div></section><section><div className="section-heading"><div><p className="eyebrow">Record trace</p><h2>Source status</h2></div><span className="legend">Text labels accompany every status</span></div><div className="status-grid"><StatusCard name="Gateway" values={result.gateway_status} /><StatusCard name="Bank" values={result.bank_status} /><StatusCard name="Ledger" values={result.ledger_status} /></div></section><Timeline records={records} /><section className="evidence-conclusion"><div className="panel evidence"><p className="eyebrow">Factual evidence</p><h2>Verified record detail</h2><ul>{result.evidence.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div><div className="reconciliation-link"><span>Evidence</span><b>↓</b><span>Reconciliation</span><b>↓</b><strong>Conclusion</strong></div><div className={`panel conclusion ${uncertain ? 'uncertain' : ''}`}><p className="eyebrow">Investigation conclusion</p><h2>{humanize(result.root_cause)}</h2><p>{result.recommended_action}</p></div></section><section className="panel discrepancy-panel"><p className="eyebrow">Detected issues</p><h2>Discrepancies</h2>{result.discrepancies.length ? <div className="discrepancy-grid">{result.discrepancies.map((item) => <Discrepancy key={item} item={item} evidence={result.evidence} />)}</div> : <p className="no-discrepancies">✓ No discrepancies detected.</p>}</section><section className="ai-panel"><div className="ai-heading"><div><p className="eyebrow">AI-assisted explanation</p><h2>Natural-language explanation</h2><p>Generated from the verified investigation result. It does not determine the outcome.</p></div>{!explanation && <button className="secondary" disabled={explanationLoading} onClick={generateExplanation}>{explanationLoading ? 'Generating explanation…' : 'Generate Explanation'}</button>}</div>{aiError && <div className="ai-error" role="alert">{aiError}</div>}{explanation && <div className="explanation-grid"><Explanation label="Summary" text={explanation.summary} /><Explanation label="What happened" text={explanation.what_happened} /><Explanation label="Why" text={explanation.why} /><Explanation label="Recommended action" text={explanation.recommended_action} /><Explanation label="Uncertainty" text={explanation.uncertainty} /><div><p className="explain-label">Evidence</p><ul>{explanation.evidence.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div></div>}</section></div>;
 }
 
-function StatusCard({ name, values }) { const tone = statusTone(values.join(' ')); return <article className="status-card"><div className="card-title"><span className={`status-dot ${tone}`} />{name}</div>{values.map(value => <span className={`status-label ${statusTone(value)}`} key={value}>{humanize(value)}</span>)}</article>; }
-function Confidence({ value, tone }) { return <div className="confidence"><p>Confidence</p><strong>{Math.round(value * 100)}%</strong><div className="meter"><span className={tone} style={{ width: `${value * 100}%` }} /></div><small>From deterministic rules</small></div>; }
+function Timeline({ records }) { const entries = systems.flatMap(([key, source, statusKey, referenceKey]) => (records[key] || []).map((record, index) => ({ source, status: record[statusKey], reference: record[referenceKey], timestamp: record.timestamp, amount: record.amount, currency: record.currency, paymentId: record.payment_id, settlementId: record.settlement_id, index }))); const missing = systems.filter(([key]) => !(records[key] || []).length).map(([, source]) => source); entries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)); return <section className="timeline-section"><div className="section-heading"><div><p className="eyebrow">Chronological record trace</p><h2>Investigation timeline</h2></div><span className="legend">Only returned record events are shown</span></div><div className="timeline">{entries.map((entry, index) => <article className="timeline-event" key={`${entry.source}-${entry.reference || index}-${entry.timestamp}`}><div className={`timeline-marker ${statusTone(entry.status)}`} /><div className="timeline-content"><div className="timeline-title"><strong>{entry.source} record</strong><span className={`status-label ${statusTone(entry.status)}`}>{humanize(entry.status)}</span></div><p className="timeline-time">{formatTimestamp(entry.timestamp)}</p><div className="timeline-meta"><span>{formatAmount(entry.amount, entry.currency)}</span>{entry.paymentId && <span>Payment ID: {entry.paymentId}</span>}{entry.settlementId && <span>Settlement ID: {entry.settlementId}</span>}{entry.reference && <span>Reference: {entry.reference}</span>}</div></div></article>)}{missing.map((source) => <article className="timeline-event missing-event" key={source}><div className="timeline-marker danger" /><div className="timeline-content"><div className="timeline-title"><strong>{source} settlement record not found</strong><span className="status-label danger">Missing record</span></div><p className="timeline-time">No {source.toLowerCase()} event was returned for this transaction.</p></div></article>)}</div></section>; }
+function Discrepancy({ item, evidence }) { const related = evidence.filter((fact) => matchesDiscrepancy(item, fact)); return <article className="discrepancy"><div><strong>{humanize(item)}</strong><code>{item}</code></div>{related.length > 0 && <ul>{related.slice(0, 3).map((fact, index) => <li key={index}>{fact}</li>)}</ul>}</article>; }
+function matchesDiscrepancy(item, fact) { const text = fact.toLowerCase(); if (item.includes('bank')) return text.includes('bank'); if (item.includes('ledger')) return text.includes('ledger'); if (item.includes('gateway')) return text.includes('gateway'); if (item.includes('amount')) return text.includes('amount'); if (item.includes('settlement_id')) return text.includes('settlement_id'); if (item.includes('payment_id')) return text.includes('payment'); return text.includes('status'); }
+function StatusCard({ name, values }) { const tone = statusTone(values.join(' ')); return <article className="status-card"><div className="card-title"><span className={`status-dot ${tone}`} />{name}</div>{values.map((value) => <span className={`status-label ${statusTone(value)}`} key={value}>{humanize(value)}</span>)}</article>; }
+function Confidence({ value, tone }) { return <div className="confidence"><p>Confidence</p><strong>{Math.round(value * 100)}%</strong><div className="meter"><span className={tone} style={{ width: `${value * 100}%` }} /></div><small>Deterministic rule confidence</small></div>; }
 function Explanation({ label, text }) { return <div><p className="explain-label">{label}</p><p>{text}</p></div>; }
-
+function formatTimestamp(timestamp) { const date = new Date(timestamp); return Number.isNaN(date.getTime()) ? 'Timestamp unavailable' : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); }
+function formatAmount(amount, currency) { return amount && currency ? `${currency} ${amount}` : amount || 'Amount unavailable'; }
 function HowItWorks() { const steps = [['01', 'Transaction', 'Enter the transaction ID.'], ['02', 'Trace', 'Find corresponding Gateway, Bank and Ledger records.'], ['03', 'Reconcile', 'Compare statuses, amounts, IDs and relevant timestamps.'], ['04', 'Detect', 'Identify missing, duplicate or conflicting evidence.'], ['05', 'Investigate', 'Determine settlement state, confidence and recommended action.'], ['06', 'Explain', 'Use AI to turn the verified result into a concise explanation.']]; return <div className="info-page"><p className="page-intro">A transparent, evidence-led workflow for settlement support.</p><div className="workflow">{steps.map(([number, title, description]) => <article key={number}><span>{number}</span><h2>{title}</h2><p>{description}</p></article>)}</div><div className="principles"><article><b>Deterministic First</b><p>Code determines what happened before any AI explanation is requested.</p></article><article><b>Evidence Based</b><p>Every conclusion is grounded in the Gateway, Bank and Ledger record trace.</p></article><article><b>Honest Uncertainty</b><p>Missing or conflicting evidence is surfaced instead of being explained away.</p></article></div></div>; }
-function DemoCases({ onSelect }) { return <div className="info-page"><p className="page-intro">Shortcuts to seeded cases. Each selection always runs the live backend investigation.</p><div className="demo-list">{demos.map(([id, label]) => <button key={id} onClick={() => onSelect(id)}><span><b>{id}</b><small>{label}</small></span><i>→</i></button>)}</div></div>; }
-
+function DemoCases({ onSelect }) { return <div className="info-page"><p className="page-intro">Shortcuts populate the transaction lookup; investigation results always come from the backend.</p><div className="demo-list">{demos.map(([id, label]) => <button key={id} onClick={() => onSelect(id)}><span><b>{id}</b><small>{label}</small></span><i>→</i></button>)}</div></div>; }
 export default App;
