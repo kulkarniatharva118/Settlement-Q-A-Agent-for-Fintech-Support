@@ -1,3 +1,4 @@
+import os
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException, Path
@@ -17,9 +18,18 @@ from app.services.investigation import TransactionNotFoundError, investigate_tra
 
 
 app = FastAPI(title="PS-8 Settlement Q&A Agent API")
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "http://localhost:5173"
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        FRONTEND_URL,
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
