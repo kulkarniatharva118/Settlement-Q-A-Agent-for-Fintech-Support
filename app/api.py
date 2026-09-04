@@ -30,8 +30,9 @@ app.add_middleware(
         FRONTEND_URL,
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://settlement-q-a-agent-for-fintech-su.vercel.app/",
     ],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
