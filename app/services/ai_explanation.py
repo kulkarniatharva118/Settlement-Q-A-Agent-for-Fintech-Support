@@ -99,11 +99,14 @@ def generate_explanation(investigation_result: Mapping[str, Any]) -> dict[str, A
     except LLMProviderError:
         raise
     except Exception as exc:
-        # Import locally so tests do not need the client package when mocking.
+        print(f"LLM ERROR: {type(exc).__name__}: {exc}")
+
         try:
             from openai import APITimeoutError
         except ImportError:
             APITimeoutError = ()  # type: ignore[assignment,misc]
+
         if isinstance(exc, APITimeoutError):
             raise LLMTimeoutError("Provider request timed out") from exc
+
         raise LLMProviderError("Provider request failed") from exc
