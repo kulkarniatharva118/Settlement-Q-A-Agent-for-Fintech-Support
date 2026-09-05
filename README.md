@@ -5,17 +5,17 @@ Support teams may need to manually investigate why a payment settlement was not 
 SettleTrace accepts a transaction ID, traces the records, reconciles them, identifies discrepancies, determines the settlement state and provides a support-friendly explanation. Missing or conflicting evidence is reported instead of guessed.
 ## Solution
 ```text
-Transaction ID
-      |
-      v
-FastAPI -> PostgreSQL
+        Transaction ID
+              |
+              v
+        FastAPI -> PostgreSQL
              / | \
         Gateway Bank Ledger
              \ | /
-              v
+               v
    Deterministic Investigation
-              |
-              v
+               |
+               v
        Optional AI Explanation
 ```
 The investigation engine determines what the data shows. The AI only explains the verified result.
@@ -194,3 +194,5 @@ The accompanying ZIP contains the complete codebase, mock data, tests and config
 - No real financial institution APIs are connected.
 - Investigation rules cover the implemented scenarios.
 - AI explanations require a configured LLM provider.
+
+#Live Link - https://settlement-q-a-agent-for-fintech-su.vercel.app/
