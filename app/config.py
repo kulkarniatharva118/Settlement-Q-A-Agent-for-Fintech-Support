@@ -10,9 +10,9 @@ DATABASE_URL = os.getenv(
 
 
 def get_llm_config() -> tuple[str | None, str, str | None]:
-    """Return runtime LLM settings without ever logging the API key."""
+    """Return runtime LLM settings without logging the API key."""
     return (
         os.getenv("LLM_API_KEY"),
-        os.getenv("LLM_MODEL", "gpt-4o-mini"),
-        os.getenv("LLM_BASE_URL") or None,
+        os.getenv("LLM_MODEL", "openai/gpt-oss-20b:free"),
+        os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
     )
