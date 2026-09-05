@@ -1,94 +1,196 @@
-# SettleTrace — Settlement Q&A Agent
-
-An internal fintech support tool for investigating settlement records across Gateway, Bank, and Ledger data. The deterministic reconciliation engine decides the settlement result; the optional LLM layer only turns that verified result into a concise support explanation.
-
-## Architecture
-
-`React UI → FastAPI → deterministic investigation → PostgreSQL (Gateway / Bank / Ledger)`
-
-The AI explanation endpoint receives the structured investigation result only. It does not access the database or determine root cause.
-
-## Stack
-
-- Python 3.11+ (tested with the project's requirements)
-- FastAPI, SQLAlchemy, PostgreSQL, pytest
-- React and Vite
-- An OpenAI-compatible client for optional explanations
-
-## Backend setup
-
-PostgreSQL must be running and accessible. The default local database URL is `postgresql+psycopg://postgres:postgres@localhost:5432/payment_settlement`.
-
+# SettleTrace
+Settlement Q&A Agent for Fintech Support.
+## Problem
+Support teams may need to manually investigate why a payment settlement was not processed. Evidence can be spread across a payment gateway, bank records and an internal ledger.
+SettleTrace accepts a transaction ID, traces the records, reconciles them, identifies discrepancies, determines the settlement state and provides a support-friendly explanation. Missing or conflicting evidence is reported instead of guessed.
+## Solution
+```text
+Transaction ID
+      |
+      v
+FastAPI -> PostgreSQL
+             / | \
+        Gateway Bank Ledger
+             \ | /
+              v
+   Deterministic Investigation
+              |
+              v
+       Optional AI Explanation
+```
+The investigation engine determines what the data shows. The AI only explains the verified result.
+## Workflow
+```text
+1. Enter transaction ID
+2. Retrieve Gateway, Bank and Ledger records
+3. Compare statuses, amounts, IDs and timestamps
+4. Detect missing, duplicate, mismatched or conflicting records
+5. Determine status, root cause, confidence and action
+6. Generate an optional natural-language explanation
+```
+## Investigation Engine
+Core logic: `app/services/investigation.py`
+Supported scenarios:
+- Normal settlement
+- Bank delay
+- Missing bank record
+- Amount mismatch
+- Missing ledger record
+- Settlement not initiated
+- Duplicate settlement
+- Insufficient/conflicting evidence
+The AI cannot change the deterministic result or invent evidence.
+## CSV Data
+`generate_data.py` creates 1,000 mock transactions:
+```text
+data/
+├── gateway.csv
+├── bank.csv
+└── ledger.csv
+```
+The datasets share fields such as `transaction_id`, `payment_id`, `settlement_id`, `amount`, `timestamp` and `status`. The generator intentionally creates different settlement conditions.
+| ID | Scenario |
+|---|---|
+| TXN-DEMO-001 | Normal settlement |
+| TXN-DEMO-002 | Bank delay |
+| TXN-DEMO-003 | Missing bank record |
+| TXN-DEMO-004 | Amount mismatch |
+| TXN-DEMO-005 | Missing ledger record |
+| TXN-DEMO-006 | Settlement not initiated |
+| TXN-DEMO-007 | Duplicate settlement |
+The CSVs are imported into PostgreSQL as mock/test data.
+## PostgreSQL
+PostgreSQL stores:
+```text
+gateway_records
+bank_records
+ledger_records
+```
+The backend uses PostgreSQL, SQLAlchemy and psycopg.
+Setup/import:
+```text
+scripts/init_db.py
+scripts/import_csv.py
+```
+The database connection is configured through `DATABASE_URL`. Local development uses the `payment_settlement` database; deployment uses an accessible hosted PostgreSQL database.
+## AI
+AI code: `app/services/ai_explanation.py`
+The model receives the structured investigation result, not unrestricted database access.
+It explains:
+```text
+what happened
+why
+evidence
+recommended action
+uncertainty
+```
+It must not change the result or invent records, values or reasons.
+Configuration:
+```text
+LLM_API_KEY
+LLM_MODEL
+LLM_BASE_URL
+```
+API keys are stored as environment variables and are not committed.
+If the AI provider is unavailable, the deterministic investigation still works.
+## Backend
+```text
+Python + FastAPI
+SQLAlchemy + PostgreSQL + psycopg
+Pydantic + Uvicorn
+pytest
+```
+Endpoints:
+```text
+GET  /health
+GET  /transactions/{transaction_id}
+GET  /investigations/{transaction_id}
+POST /investigations/{transaction_id}/explanation
+```
+## Frontend
+The frontend uses React, Vite, JavaScript and CSS.
+It provides transaction lookup, Gateway/Bank/Ledger status, investigation results, evidence, discrepancies, timeline, recommended action, demo cases and optional AI explanation.
+The backend URL is configured with:
+```text
+VITE_API_BASE_URL
+```
+## Deployment
+```text
+Frontend: Vercel
+Backend:  Render
+Database: PostgreSQL
+```
+The Vercel frontend uses `VITE_API_BASE_URL` to call the Render backend.
+Render runs FastAPI with:
+```text
+uvicorn app.api:app --host 0.0.0.0 --port $PORT
+```
+### Deployment Issue
+The application worked locally but initially failed to communicate correctly after deployment. The Vercel frontend and Render backend run on different origins, and CORS initially blocked the production frontend.
+The backend CORS configuration was updated to allow the production frontend URL. The production database and required environment variables were also configured. The deployed frontend and backend then communicated successfully.
+## Testing
+```powershell
+python -m pytest -q
+```
+Frontend:
+```powershell
+cd frontend
+npm run build
+```
+## Local Setup
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-
-# Set this only when your PostgreSQL credentials differ from the default.
-$env:DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/payment_settlement"
-
+```
+Create PostgreSQL database:
+```text
+payment_settlement
+```
+Generate and import data:
+```powershell
 python generate_data.py
 python scripts/init_db.py
 python scripts/import_csv.py
+```
+Start backend:
+```powershell
 uvicorn app.api:app --reload --port 8000
 ```
-
-The generator is deterministic and writes `data/gateway.csv`, `data/bank.csv`, and `data/ledger.csv`. Running it again regenerates the mock dataset; it does not need manual CSV edits.
-
-## Optional AI explanation
-
-Set these variables in the shell that starts FastAPI. The application does not load `.env` files automatically.
-
-```powershell
-$env:LLM_API_KEY = "your-provider-key"
-$env:LLM_MODEL = "gpt-4o-mini"              # optional
-$env:LLM_BASE_URL = "https://provider/v1"   # optional, OpenAI-compatible providers
-```
-
-Without `LLM_API_KEY`, deterministic investigation endpoints still work. The explanation endpoint responds with a safe configuration error.
-
-## Frontend setup
-
-In a second terminal:
-
+Start frontend in another terminal:
 ```powershell
 cd frontend
 npm install
-$env:VITE_API_BASE_URL = "http://localhost:8000"  # optional; this is the default
 npm run dev
 ```
-
-Open the Vite URL shown in the terminal (normally `http://localhost:5173`). CORS is configured for the local Vite origin.
-
-## Tests and build
-
-```powershell
-# From the repository root, with the virtual environment active
-python -m pytest -q
-
-# From frontend
-npm run build
+## Project Structure
+```text
+Settlement-Q-A-Agent-for-Fintech-Support-main/
+├── app/
+│   ├── api.py
+│   ├── config.py
+│   ├── database.py
+│   ├── models.py
+│   ├── repository.py
+│   ├── schemas.py
+│   └── services/
+│       ├── ai_explanation.py
+│       └── investigation.py
+├── data/
+│   ├── gateway.csv
+│   ├── bank.csv
+│   └── ledger.csv
+├── frontend/
+├── scripts/
+├── tests/
+├── generate_data.py
+├── requirements.txt
+├── .env.example
+└── README.md
 ```
-
-Tests use SQLite and mocked LLM calls; they require neither PostgreSQL nor a real LLM key/network connection.
-
-## API
-
-- `GET /health`
-- `GET /transactions/{transaction_id}`
-- `GET /investigations/{transaction_id}`
-- `POST /investigations/{transaction_id}/explanation`
-
-## Demo transactions
-
-| Transaction | Scenario |
-| --- | --- |
-| `TXN-DEMO-001` | Normal Settlement |
-| `TXN-DEMO-002` | Bank Delay |
-| `TXN-DEMO-003` | Missing Bank Record |
-| `TXN-DEMO-004` | Amount Mismatch |
-| `TXN-DEMO-005` | Missing Ledger |
-| `TXN-DEMO-006` | Settlement Not Initiated |
-| `TXN-DEMO-007` | Duplicate Settlement |
-
-For a reliable demo: start with `TXN-DEMO-001`, then show `TXN-DEMO-004`, `TXN-DEMO-003`, and `TXN-DEMO-007`. Generate an AI explanation only after showing the deterministic investigation result.
+The accompanying ZIP contains the complete codebase, mock data, tests and configuration.
+## Limitations
+- Gateway, Bank and Ledger data is mock data.
+- No real financial institution APIs are connected.
+- Investigation rules cover the implemented scenarios.
+- AI explanations require a configured LLM provider.
